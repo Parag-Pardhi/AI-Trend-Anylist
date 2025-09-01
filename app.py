@@ -151,53 +151,289 @@ if page == "🏠 Home":
             except Exception as e:
                 st.error(f"Error loading sample data: {str(e)}")
     
-    # Market data from APIs
+    # Enhanced Market data with Indian market support
     st.subheader("🌐 Real-time Market Data")
     
-    col_api1, col_api2 = st.columns(2)
+    # Market selection tabs
+    market_tab1, market_tab2 = st.tabs(["🇺🇸 Global Markets", "🇮🇳 Indian Markets"])
     
-    with col_api1:
-        st.markdown("#### Stock Market Data")
-        stock_symbol = st.text_input("Enter stock symbol (e.g., AAPL, TSLA)", value="AAPL")
-        if st.button("📈 Fetch Stock Data"):
+    with market_tab1:
+        st.markdown("#### Global Stock Markets")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            stock_symbol = st.text_input("Enter stock symbol", value="AAPL", help="e.g., AAPL, GOOGL, TSLA")
+            search_query = st.text_input("🔍 Search Stocks", placeholder="Search by company name...")
+            
+            if search_query:
+                search_results = data_collector.search_stocks(search_query)
+                if search_results:
+                    selected_stock = st.selectbox(
+                        "Select from search results:",
+                        options=search_results,
+                        format_func=lambda x: f"{x['name']} ({x['symbol']}) - {x['market']}"
+                    )
+                    if selected_stock:
+                        stock_symbol = selected_stock['symbol']
+        
+        with col2:
+            time_period = st.selectbox("Time Period", ["1mo", "3mo", "6mo", "1y", "2y"], index=3)
+            
+        if st.button("📈 Fetch Global Stock Data"):
             try:
-                with st.spinner("Fetching data..."):
-                    stock_data = data_collector.get_stock_data(stock_symbol)
+                with st.spinner("Fetching stock data..."):
+                    stock_data = data_collector.get_stock_data(stock_symbol, time_period)
                     st.session_state.stock_data = stock_data
-                    st.success(f"✅ {stock_symbol} data fetched!")
+                    st.success(f"✅ {stock_symbol} data fetched with VCP analysis!")
                     
-                    # Quick visualization
-                    fig = px.line(stock_data.reset_index(), 
-                                x='Date', y='Close',
-                                title=f"{stock_symbol} Stock Price Trend")
+                    # Display enhanced metrics
+                    if stock_data is not None:
+                        col1, col2, col3, col4, col5 = st.columns(5)
+                        
+                        current_price = stock_data['Close'].iloc[-1]
+                        daily_change = stock_data['Close'].iloc[-1] - stock_data['Close'].iloc[-2]
+                        daily_change_pct = (daily_change / stock_data['Close'].iloc[-2]) * 100
+                        current_trend = stock_data['Trend'].iloc[-1] if 'Trend' in stock_data.columns else 'N/A'
+                        vcp_signal = stock_data['VCP_Signal'].iloc[-1] if 'VCP_Signal' in stock_data.columns else False
+                        
+                        with col1:
+                            st.metric("Current Price", f"${current_price:.2f}")
+                        with col2:
+                            st.metric("Daily Change", f"{daily_change:.2f} ({daily_change_pct:+.1f}%)")
+                        with col3:
+                            st.metric("Volume", f"{stock_data['Volume'].iloc[-1]:,}")
+                        with col4:
+                            trend_color = "🟢" if current_trend == "Bullish" else "🔴" if current_trend == "Bearish" else "🟡"
+                            st.metric("Trend", f"{trend_color} {current_trend}")
+                        with col5:
+                            vcp_status = "✅ VCP Active" if vcp_signal else "❌ No VCP"
+                            st.metric("VCP Pattern", vcp_status)
+                    
+                    # Enhanced visualization with trend signals
+                    fig = go.Figure()
+                    
+                    # Main price line
+                    fig.add_trace(go.Scatter(
+                        x=stock_data.index,
+                        y=stock_data['Close'],
+                        mode='lines',
+                        name='Price',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    # Add moving averages if available
+                    if 'MA_20' in stock_data.columns:
+                        fig.add_trace(go.Scatter(
+                            x=stock_data.index,
+                            y=stock_data['MA_20'],
+                            mode='lines',
+                            name='MA 20',
+                            line=dict(color='orange', width=1)
+                        ))
+                    
+                    if 'MA_50' in stock_data.columns:
+                        fig.add_trace(go.Scatter(
+                            x=stock_data.index,
+                            y=stock_data['MA_50'],
+                            mode='lines',
+                            name='MA 50',
+                            line=dict(color='red', width=1)
+                        ))
+                    
+                    # Add trend signals
+                    if 'Golden_Cross' in stock_data.columns:
+                        golden_cross_points = stock_data[stock_data['Golden_Cross']]
+                        if not golden_cross_points.empty:
+                            fig.add_trace(go.Scatter(
+                                x=golden_cross_points.index,
+                                y=golden_cross_points['Close'],
+                                mode='markers',
+                                name='🟢 Bullish Signal',
+                                marker=dict(color='green', size=10, symbol='triangle-up')
+                            ))
+                    
+                    if 'Death_Cross' in stock_data.columns:
+                        death_cross_points = stock_data[stock_data['Death_Cross']]
+                        if not death_cross_points.empty:
+                            fig.add_trace(go.Scatter(
+                                x=death_cross_points.index,
+                                y=death_cross_points['Close'],
+                                mode='markers',
+                                name='🔴 Bearish Signal',
+                                marker=dict(color='red', size=10, symbol='triangle-down')
+                            ))
+                    
+                    fig.update_layout(
+                        title=f"{stock_symbol} - Technical Analysis with Trend Signals",
+                        xaxis_title="Date",
+                        yaxis_title="Price ($)",
+                        hovermode='x unified',
+                        height=500
+                    )
+                    
                     st.plotly_chart(fig, use_container_width=True)
                     
             except Exception as e:
                 st.error(f"Error fetching stock data: {str(e)}")
     
-    with col_api2:
-        st.markdown("#### Economic Indicators")
-        if st.button("📊 Load Economic Data"):
+    with market_tab2:
+        st.markdown("#### Indian Stock Markets (NSE)")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            indian_stock = st.selectbox(
+                "Select Indian Stock",
+                options=list(data_collector.indian_stocks.keys()),
+                help="Popular Indian stocks from NSE"
+            )
+            indian_search = st.text_input("🔍 Search Indian Stocks", placeholder="Search Indian companies...")
+            
+            if indian_search:
+                indian_results = [stock for stock in data_collector.indian_stocks.keys() 
+                                if indian_search.upper() in stock]
+                if indian_results:
+                    indian_stock = st.selectbox("Search Results:", indian_results)
+        
+        with col2:
+            time_period_indian = st.selectbox("Time Period ", ["1mo", "3mo", "6mo", "1y", "2y"], index=3, key="indian_period")
+        
+        if st.button("📈 Fetch Indian Stock Data"):
             try:
-                with st.spinner("Loading economic indicators..."):
-                    economic_data = data_collector.get_economic_indicators()
-                    st.session_state.economic_data = economic_data
-                    st.success("✅ Economic data loaded!")
+                indian_symbol = data_collector.indian_stocks.get(indian_stock, f"{indian_stock}.NS")
+                with st.spinner("Fetching Indian stock data..."):
+                    stock_data = data_collector.get_stock_data(indian_symbol, time_period_indian)
+                    st.session_state.stock_data = stock_data
+                    st.success(f"✅ {indian_stock} data fetched with VCP analysis!")
                     
-                    # Show key metrics
-                    if not economic_data.empty:
-                        metrics = economic_data.iloc[-1]
-                        col_m1, col_m2, col_m3 = st.columns(3)
+                    # Display enhanced metrics for Indian stocks
+                    if stock_data is not None:
+                        col1, col2, col3, col4, col5 = st.columns(5)
                         
-                        with col_m1:
-                            st.metric("GDP Growth", f"{metrics.get('GDP_Growth', 0):.2f}%")
-                        with col_m2:
-                            st.metric("Inflation Rate", f"{metrics.get('Inflation', 0):.2f}%")
-                        with col_m3:
-                            st.metric("Unemployment", f"{metrics.get('Unemployment', 0):.2f}%")
-                            
+                        current_price = stock_data['Close'].iloc[-1]
+                        daily_change = stock_data['Close'].iloc[-1] - stock_data['Close'].iloc[-2]
+                        daily_change_pct = (daily_change / stock_data['Close'].iloc[-2]) * 100
+                        current_trend = stock_data['Trend'].iloc[-1] if 'Trend' in stock_data.columns else 'N/A'
+                        vcp_signal = stock_data['VCP_Signal'].iloc[-1] if 'VCP_Signal' in stock_data.columns else False
+                        
+                        with col1:
+                            st.metric("Current Price", f"₹{current_price:.2f}")
+                        with col2:
+                            st.metric("Daily Change", f"₹{daily_change:.2f} ({daily_change_pct:+.1f}%)")
+                        with col3:
+                            st.metric("Volume", f"{stock_data['Volume'].iloc[-1]:,}")
+                        with col4:
+                            trend_color = "🟢" if current_trend == "Bullish" else "🔴" if current_trend == "Bearish" else "🟡"
+                            st.metric("Trend", f"{trend_color} {current_trend}")
+                        with col5:
+                            vcp_status = "✅ VCP Active" if vcp_signal else "❌ No VCP"
+                            st.metric("VCP Pattern", vcp_status)
+                    
+                    # Same enhanced visualization for Indian stocks
+                    fig = go.Figure()
+                    
+                    fig.add_trace(go.Scatter(
+                        x=stock_data.index,
+                        y=stock_data['Close'],
+                        mode='lines',
+                        name='Price',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    if 'MA_20' in stock_data.columns:
+                        fig.add_trace(go.Scatter(
+                            x=stock_data.index,
+                            y=stock_data['MA_20'],
+                            mode='lines',
+                            name='MA 20',
+                            line=dict(color='orange', width=1)
+                        ))
+                    
+                    if 'MA_50' in stock_data.columns:
+                        fig.add_trace(go.Scatter(
+                            x=stock_data.index,
+                            y=stock_data['MA_50'],
+                            mode='lines',
+                            name='MA 50',
+                            line=dict(color='red', width=1)
+                        ))
+                    
+                    fig.update_layout(
+                        title=f"{indian_stock} ({indian_symbol}) - Technical Analysis",
+                        xaxis_title="Date",
+                        yaxis_title="Price (₹)",
+                        hovermode='x unified',
+                        height=500
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
             except Exception as e:
-                st.error(f"Error loading economic data: {str(e)}")
+                st.error(f"Error fetching Indian stock data: {str(e)}")
+    
+    # Enhanced Economic Indicators Section
+    st.subheader("🏛️ Enhanced Economic Indicators")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        selected_country = st.selectbox(
+            "🌍 Select Country",
+            options=['US', 'India', 'UK', 'Germany', 'Japan'],
+            help="Choose country for economic indicators"
+        )
+    
+    with col2:
+        indicator_search = st.text_input("🔍 Search Indicators", placeholder="Search economic indicators...")
+    
+    if st.button("📊 Load Enhanced Economic Data"):
+        try:
+            with st.spinner("Loading economic indicators..."):
+                economic_data = data_collector.get_economic_indicators(selected_country)
+                st.session_state.economic_data = economic_data
+                st.success(f"✅ Economic data for {selected_country} loaded!")
+                
+                # Show key metrics based on country
+                if not economic_data.empty:
+                    metrics = economic_data.iloc[-1]
+                    cols = st.columns(len(economic_data.columns))
+                    
+                    for i, col_name in enumerate(economic_data.columns):
+                        with cols[i]:
+                            value = metrics.get(col_name, 0)
+                            st.metric(
+                                col_name.replace('_', ' ').title(),
+                                f"{value:.2f}%"
+                            )
+                    
+                    # Enhanced economic indicators chart
+                    fig = make_subplots(
+                        rows=2, cols=2,
+                        subplot_titles=[col.replace('_', ' ').title() for col in economic_data.columns[:4]]
+                    )
+                    
+                    for i, col in enumerate(economic_data.columns[:4]):
+                        row = (i // 2) + 1
+                        col_pos = (i % 2) + 1
+                        
+                        fig.add_trace(
+                            go.Scatter(
+                                x=economic_data.index,
+                                y=economic_data[col],
+                                name=col.replace('_', ' ').title(),
+                                mode='lines+markers'
+                            ),
+                            row=row, col=col_pos
+                        )
+                    
+                    fig.update_layout(
+                        height=600,
+                        showlegend=False,
+                        title=f"Economic Indicators - {selected_country}"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                        
+        except Exception as e:
+            st.error(f"Error loading economic data: {str(e)}")
 
 # Market Forecasting page
 elif page == "📈 Market Forecasting":

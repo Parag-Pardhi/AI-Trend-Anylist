@@ -15,6 +15,28 @@ class DataCollector:
     
     def __init__(self):
         self.api_key = os.getenv("API_KEY", "demo_key")
+        self.cache = {}
+        # Indian stock symbols mapping
+        self.indian_stocks = {
+            'RELIANCE': 'RELIANCE.NS', 'TCS': 'TCS.NS', 'INFY': 'INFY.NS',
+            'HDFCBANK': 'HDFCBANK.NS', 'ICICIBANK': 'ICICIBANK.NS', 'HINDUNILVR': 'HINDUNILVR.NS',
+            'BHARTIARTL': 'BHARTIARTL.NS', 'ITC': 'ITC.NS', 'KOTAKBANK': 'KOTAKBANK.NS',
+            'LT': 'LT.NS', 'SBIN': 'SBIN.NS', 'ASIANPAINT': 'ASIANPAINT.NS',
+            'MARUTI': 'MARUTI.NS', 'BAJFINANCE': 'BAJFINANCE.NS', 'HCLTECH': 'HCLTECH.NS',
+            'WIPRO': 'WIPRO.NS', 'ULTRACEMCO': 'ULTRACEMCO.NS', 'TITAN': 'TITAN.NS',
+            'NESTLEIND': 'NESTLEIND.NS', 'POWERGRID': 'POWERGRID.NS', 'ADANIPORTS': 'ADANIPORTS.NS',
+            'AXISBANK': 'AXISBANK.NS', 'TATAMOTORS': 'TATAMOTORS.NS', 'TATASTEEL': 'TATASTEEL.NS',
+            'SUNPHARMA': 'SUNPHARMA.NS', 'ONGC': 'ONGC.NS', 'NTPC': 'NTPC.NS', 'TECHM': 'TECHM.NS'
+        }
+        
+        # Country economic indicators mapping
+        self.country_indicators = {
+            'US': ['GDP', 'Inflation', 'Unemployment', 'Interest_Rate'],
+            'India': ['GDP_Growth', 'CPI_Inflation', 'Unemployment_Rate', 'Repo_Rate'],
+            'UK': ['GDP_Growth', 'Inflation_Rate', 'Unemployment', 'Bank_Rate'],
+            'Germany': ['GDP_Growth', 'HICP_Inflation', 'Unemployment_Rate', 'ECB_Rate'],
+            'Japan': ['GDP_Growth', 'Core_Inflation', 'Unemployment', 'Policy_Rate']
+        }
         
     def load_sample_data(self):
         """
@@ -100,6 +122,89 @@ class DataCollector:
         
         return sample_data
     
+    def get_stock_symbol_format(self, symbol):
+        """Convert stock symbol to proper Yahoo Finance format"""
+        symbol_upper = symbol.upper()
+        if symbol_upper in self.indian_stocks:
+            return self.indian_stocks[symbol_upper]
+        elif '.NS' in symbol or '.BO' in symbol or '.L' in symbol:
+            return symbol
+        else:
+            return symbol
+    
+    def calculate_vcp_pattern(self, df):
+        """Calculate Volatility Contraction Pattern (VCP) indicators"""
+        try:
+            vcp_data = df.copy()
+            
+            # Calculate Average True Range (ATR)
+            high_low = vcp_data['High'] - vcp_data['Low']
+            high_close = np.abs(vcp_data['High'] - vcp_data['Close'].shift())
+            low_close = np.abs(vcp_data['Low'] - vcp_data['Close'].shift())
+            
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            true_range = ranges.max(axis=1)
+            vcp_data['ATR'] = true_range.rolling(window=14).mean()
+            
+            # Calculate volatility contraction
+            vcp_data['Volatility_20'] = vcp_data['Returns'].rolling(window=20).std()
+            vcp_data['Volatility_10'] = vcp_data['Returns'].rolling(window=10).std()
+            vcp_data['VCP_Ratio'] = vcp_data['Volatility_10'] / vcp_data['Volatility_20']
+            
+            # VCP Signal: when current volatility is lower than historical
+            vcp_data['VCP_Signal'] = vcp_data['VCP_Ratio'] < 0.8
+            
+            # Price consolidation check
+            vcp_data['Price_Range_Pct'] = (vcp_data['High'].rolling(20).max() - 
+                                          vcp_data['Low'].rolling(20).min()) / vcp_data['Close'] * 100
+            
+            # Tight consolidation when price range is small
+            vcp_data['Tight_Consolidation'] = vcp_data['Price_Range_Pct'] < 15
+            
+            return vcp_data
+            
+        except Exception as e:
+            print(f"Error calculating VCP: {e}")
+            return df
+    
+    def detect_trend_signals(self, df):
+        """Detect bullish and bearish trend signals"""
+        try:
+            trend_data = df.copy()
+            
+            # Moving averages for trend detection
+            trend_data['MA_5'] = trend_data['Close'].rolling(window=5).mean()
+            trend_data['MA_10'] = trend_data['Close'].rolling(window=10).mean()
+            trend_data['MA_20'] = trend_data['Close'].rolling(window=20).mean()
+            trend_data['MA_50'] = trend_data['Close'].rolling(window=50).mean()
+            
+            # Bullish signals
+            trend_data['Golden_Cross'] = (trend_data['MA_20'] > trend_data['MA_50']) & \
+                                       (trend_data['MA_20'].shift() <= trend_data['MA_50'].shift())
+            
+            trend_data['Price_Above_MA20'] = trend_data['Close'] > trend_data['MA_20']
+            trend_data['Volume_Surge'] = trend_data['Volume'] > trend_data['Volume'].rolling(20).mean() * 1.5
+            
+            # Bearish signals
+            trend_data['Death_Cross'] = (trend_data['MA_20'] < trend_data['MA_50']) & \
+                                      (trend_data['MA_20'].shift() >= trend_data['MA_50'].shift())
+            
+            trend_data['Price_Below_MA20'] = trend_data['Close'] < trend_data['MA_20']
+            
+            # Overall trend classification
+            bullish_conditions = trend_data[['Price_Above_MA20']].sum(axis=1)
+            bearish_conditions = trend_data[['Price_Below_MA20']].sum(axis=1)
+            
+            trend_data['Trend'] = 'Neutral'
+            trend_data.loc[bullish_conditions > bearish_conditions, 'Trend'] = 'Bullish'
+            trend_data.loc[bearish_conditions > bullish_conditions, 'Trend'] = 'Bearish'
+            
+            return trend_data
+            
+        except Exception as e:
+            print(f"Error detecting trends: {e}")
+            return df
+    
     def get_stock_data(self, symbol, period="1y"):
         """
         Fetch stock market data using Yahoo Finance API.
@@ -112,13 +217,27 @@ class DataCollector:
             pd.DataFrame: Stock price data with OHLCV
         """
         try:
-            ticker = yf.Ticker(symbol)
+            # Get proper symbol format
+            yahoo_symbol = self.get_stock_symbol_format(symbol)
+            
+            # Check cache first
+            if yahoo_symbol in self.cache:
+                return self.cache[yahoo_symbol]
+            
+            ticker = yf.Ticker(yahoo_symbol)
             stock_data = ticker.history(period=period)
             
             if stock_data.empty:
-                raise ValueError(f"No data found for symbol: {symbol}")
+                # Try with .NS extension for Indian stocks if not already present
+                if not yahoo_symbol.endswith('.NS') and not yahoo_symbol.endswith('.BO'):
+                    yahoo_symbol = f"{yahoo_symbol}.NS"
+                    ticker = yf.Ticker(yahoo_symbol)
+                    stock_data = ticker.history(period=period)
+                
+                if stock_data.empty:
+                    raise ValueError(f"No data found for symbol: {symbol}")
             
-            # Add additional technical indicators
+            # Add technical indicators
             stock_data['Returns'] = stock_data['Close'].pct_change()
             stock_data['Volatility'] = stock_data['Returns'].rolling(window=20).std()
             stock_data['MA_20'] = stock_data['Close'].rolling(window=20).mean()
@@ -132,6 +251,15 @@ class DataCollector:
             avg_loss = loss.rolling(window=14).mean()
             rs = avg_gain / avg_loss
             stock_data['RSI'] = 100 - (100 / (1 + rs))
+            
+            # Add VCP analysis
+            stock_data = self.calculate_vcp_pattern(stock_data)
+            
+            # Add trend detection
+            stock_data = self.detect_trend_signals(stock_data)
+            
+            # Cache the data
+            self.cache[yahoo_symbol] = stock_data
             
             return stock_data
             
@@ -180,23 +308,74 @@ class DataCollector:
         
         return stock_data
     
-    def get_economic_indicators(self):
+    def search_stocks(self, query):
+        """Search for stocks based on query"""
+        query_upper = query.upper()
+        matches = []
+        
+        # Search in Indian stocks
+        for name, symbol in self.indian_stocks.items():
+            if query_upper in name or query_upper in symbol:
+                matches.append({'name': name, 'symbol': symbol, 'market': 'Indian'})
+        
+        # Add common US stocks for search
+        us_stocks = {
+            'APPLE': 'AAPL', 'MICROSOFT': 'MSFT', 'GOOGLE': 'GOOGL', 
+            'AMAZON': 'AMZN', 'TESLA': 'TSLA', 'META': 'META',
+            'NVIDIA': 'NVDA', 'NETFLIX': 'NFLX', 'ADOBE': 'ADBE'
+        }
+        
+        for name, symbol in us_stocks.items():
+            if query_upper in name or query_upper in symbol:
+                matches.append({'name': name, 'symbol': symbol, 'market': 'US'})
+        
+        return matches[:10]  # Return top 10 matches
+    
+    def get_economic_indicators(self, country='US'):
         """
         Fetch economic indicators data.
         In a real implementation, this would connect to economic data APIs.
         """
         try:
-            # For demonstration, generate sample economic data
+            # Generate country-specific economic data
             dates = pd.date_range(end=datetime.now(), periods=60, freq='M')
             
-            economic_data = pd.DataFrame({
-                'Date': dates,
-                'GDP_Growth': np.random.normal(2.5, 1.0, len(dates)),
-                'Inflation': np.random.normal(3.0, 0.8, len(dates)),
-                'Unemployment': np.random.normal(5.5, 1.5, len(dates)),
-                'Interest_Rate': np.random.normal(2.0, 0.5, len(dates)),
-                'Consumer_Confidence': np.random.normal(100, 15, len(dates))
-            })
+            if country == 'India':
+                economic_data = pd.DataFrame({
+                    'Date': dates,
+                    'GDP_Growth': np.random.normal(6.5, 1.2, len(dates)),
+                    'CPI_Inflation': np.random.normal(5.8, 1.0, len(dates)),
+                    'Unemployment_Rate': np.random.normal(7.2, 1.0, len(dates)),
+                    'Repo_Rate': np.random.normal(6.0, 0.8, len(dates)),
+                    'Industrial_Production': np.random.normal(4.2, 2.0, len(dates)),
+                    'Forex_Reserves': np.random.normal(600, 20, len(dates))
+                })
+            elif country == 'US':
+                economic_data = pd.DataFrame({
+                    'Date': dates,
+                    'GDP_Growth': np.random.normal(2.5, 1.0, len(dates)),
+                    'Inflation': np.random.normal(3.0, 0.8, len(dates)),
+                    'Unemployment': np.random.normal(4.0, 1.0, len(dates)),
+                    'Interest_Rate': np.random.normal(5.0, 0.5, len(dates)),
+                    'Consumer_Confidence': np.random.normal(100, 15, len(dates))
+                })
+            elif country == 'UK':
+                economic_data = pd.DataFrame({
+                    'Date': dates,
+                    'GDP_Growth': np.random.normal(1.8, 1.2, len(dates)),
+                    'Inflation_Rate': np.random.normal(2.1, 0.9, len(dates)),
+                    'Unemployment': np.random.normal(3.8, 0.8, len(dates)),
+                    'Bank_Rate': np.random.normal(5.25, 0.6, len(dates))
+                })
+            else:
+                # Default to US data
+                economic_data = pd.DataFrame({
+                    'Date': dates,
+                    'GDP_Growth': np.random.normal(2.5, 1.0, len(dates)),
+                    'Inflation': np.random.normal(3.0, 0.8, len(dates)),
+                    'Unemployment': np.random.normal(4.0, 1.0, len(dates)),
+                    'Interest_Rate': np.random.normal(5.0, 0.5, len(dates))
+                })
             
             economic_data.set_index('Date', inplace=True)
             return economic_data
