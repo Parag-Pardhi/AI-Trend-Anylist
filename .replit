@@ -2,7 +2,7 @@ modules = ["python-3.11"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "pkg-config", "qhull", "tcl", "tk"]
+packages = ["cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libjpeg_turbo", "libpng", "pkg-config", "qhull", "tcl", "tk", "which"]
 
 [deployment]
 deploymentTarget = "autoscale"
@@ -31,3 +31,7 @@ waitForPort = 5000
 
 [workflows.workflow.metadata]
 outputType = "webview"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
