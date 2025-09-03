@@ -1,0 +1,16 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+yfinance
+prophet
+transformers
+plotly
+nltk
+torch
+xgboost
+statsmodels
+shap
+lime
